@@ -1,0 +1,9 @@
+{
+  "id": "drawio-zoom-preview",
+  "name": "Drawio Zoom Preview",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Drawio 插件的伴随扩展：为所有 drawio 预览添加放大镜按钮，点击打开可缩放、可平移的全屏灯箱，支持多页切换。",
+  "author": "local",
+  "isDesktopOnly": false
+}

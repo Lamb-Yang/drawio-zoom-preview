@@ -1,0 +1,206 @@
+/* ==== drawio-zoom-preview ==== */
+
+/* --- 宿主预览右上角的操作按钮组（悬停浮现） --- */
+.dzp-actions {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	z-index: 20;
+	display: flex;
+	gap: 4px;
+	opacity: 0;
+	transition: opacity 0.12s ease;
+}
+.drawio-embed:hover .dzp-actions,
+.drawio-codeblock:hover .dzp-actions,
+.drawio-preview-file-view:hover .dzp-actions,
+.dzp-actions:focus-within {
+	opacity: 1;
+}
+/* 触屏设备没有 hover，按钮组常驻 */
+body.dzp-touch .dzp-actions {
+	opacity: 0.85;
+}
+.dzp-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border-radius: 6px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	cursor: pointer;
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+.dzp-btn:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+/* --- 灯箱弹窗 --- */
+.modal.dzp-modal {
+	width: 95vw;
+	height: 92vh;
+	max-width: none;
+	max-height: none;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+.modal.dzp-modal .modal-content {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	padding: 0;
+	overflow: hidden;
+}
+
+/* 顶部工具栏 */
+.dzp-toolbar {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+.dzp-pages {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+.dzp-pages button {
+	background: none;
+	border: none;
+	padding: 2px 8px;
+	margin: 0;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+	line-height: 1;
+}
+.dzp-pages button:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+.dzp-pages button:not(:disabled):hover {
+	color: var(--text-normal);
+}
+.dzp-page-label {
+	max-width: 26ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.dzp-title {
+	flex: 1 1 auto;
+	min-width: 0;
+	text-align: center;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.dzp-controls {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	white-space: nowrap;
+}
+.dzp-controls button {
+	background: none;
+	border: none;
+	border-radius: 6px;
+	padding: 3px 8px;
+	margin: 0;
+	font: inherit;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	cursor: pointer;
+	line-height: 1.2;
+}
+.dzp-controls button:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+.dzp-percent {
+	min-width: 48px;
+	text-align: center;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+/* 画布区 */
+.dzp-stage {
+	flex: 1 1 auto;
+	min-height: 0;
+	position: relative;
+	overflow: hidden;
+	cursor: grab;
+	touch-action: none;
+	overscroll-behavior: contain;
+	user-select: none;
+	background: var(--background-primary);
+}
+.dzp-stage.dzp-grabbing {
+	cursor: grabbing;
+}
+.dzp-canvas {
+	position: absolute;
+	left: 0;
+	top: 0;
+	transform-origin: 0 0;
+	will-change: transform;
+}
+.dzp-canvas svg {
+	display: block;
+	max-width: none;
+	max-height: none;
+}
+/* 灯箱内禁用图中链接，避免与拖拽冲突 */
+.dzp-canvas a {
+	pointer-events: none;
+}
+
+/* 翻页渲染中的遮罩 */
+.dzp-loading {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	background: rgba(127, 127, 127, 0.15);
+}
+
+/* 底部操作提示 */
+.dzp-statusbar {
+	flex: 0 0 auto;
+	padding: 4px 12px;
+	border-top: 1px solid var(--background-modifier-border);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	text-align: center;
+}
+
+/* 打开失败时显示在灯箱内的错误信息 */
+.dzp-open-error {
+	padding: 16px;
+	color: var(--text-error);
+	border: 1px solid var(--background-modifier-error);
+	border-radius: 6px;
+	margin: 12px;
+	font-size: var(--font-ui-small);
+	white-space: pre-wrap;
+	word-break: break-all;
+}
