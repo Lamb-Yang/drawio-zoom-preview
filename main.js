@@ -108,6 +108,19 @@ function graphViewerAvailable() {
 	);
 }
 
+// 与宿主 previewOpts()（followObsidianTheme && isDark）对齐的深色判定。
+// 宿主关闭"跟随 Obsidian 主题"时其预览固定浅色，离屏渲染的其它页也应
+// 保持浅色，否则灯箱内第一页（克隆）与其余页（离屏渲染）配色不一致
+function isDarkRender(app) {
+	const plugin =
+		app.plugins && app.plugins.plugins && app.plugins.plugins["drawio-editor"];
+	const follow =
+		plugin && plugin.settings
+			? plugin.settings.followObsidianTheme !== false
+			: true;
+	return follow && document.body.classList.contains("theme-dark");
+}
+
 function waitForSvg(root, timeoutMs) {
 	const now = root.querySelector("svg");
 	if (now) return Promise.resolve(now);
@@ -154,7 +167,7 @@ function extractSvg(liveSvg) {
 	return sanitizeSvg(clone);
 }
 
-async function renderPageSvg(xml, pageIndex) {
+async function renderPageSvg(xml, pageIndex, dark) {
 	if (!graphViewerAvailable()) return null;
 	offscreenSeq += 1;
 	const host = document.createElement("div");
@@ -163,7 +176,6 @@ async function renderPageSvg(xml, pageIndex) {
 		"position:fixed;left:-10000px;top:-10000px;width:1200px;height:800px;overflow:hidden;pointer-events:none;visibility:hidden;";
 	const slot = document.createElement("div");
 	slot.className = "mxgraph";
-	const dark = document.body.classList.contains("theme-dark");
 	slot.setAttribute(
 		"data-mxgraph",
 		JSON.stringify({
@@ -214,6 +226,9 @@ function cacheFor(key, stamp) {
 
 /* ---------------- 灯箱 ---------------- */
 
+// 快速双击放大镜时避免叠开两层灯箱
+let lightboxOpen = false;
+
 class ZoomLightbox extends Modal {
 	constructor(app, opts) {
 		super(app);
@@ -235,9 +250,12 @@ class ZoomLightbox extends Modal {
 		this.lastPinch = null;
 		this.rendering = false;
 		this.loadingEl = null;
+		this.tapSuppressed = false;
+		this.lastTap = { t: 0, x: 0, y: 0 };
 	}
 
 	onOpen() {
+		lightboxOpen = true;
 		try {
 			this.onOpenInner();
 		} catch (err) {
@@ -319,6 +337,7 @@ class ZoomLightbox extends Modal {
 	}
 
 	onClose() {
+		lightboxOpen = false;
 		// 部分 Obsidian 版本的 Modal 不是 Component（没有 register），
 		// 监听器在 onClose 手动移除
 		if (this.resizeHandler) {
@@ -338,9 +357,16 @@ class ZoomLightbox extends Modal {
 		const svg = holder.querySelector("svg");
 		if (!svg) return;
 		this.canvasEl.appendChild(svg);
-		let w = parseFloat(svg.getAttribute("width")) || 0;
-		let h = parseFloat(svg.getAttribute("height")) || 0;
-		if (!(w > 0 && h > 0)) {
+		// 带百分号的宽高属性不可直接 parseFloat（"100%" 会变成 100）
+		const wa = svg.getAttribute("width");
+		const ha = svg.getAttribute("height");
+		let w = wa && !/%\s*$/.test(wa) ? parseFloat(wa) || 0 : 0;
+		let h = ha && !/%\s*$/.test(ha) ? parseFloat(ha) || 0 : 0;
+		if (w > 0 && h > 0) {
+			// 灯箱语义是"整图 + CSS transform 缩放"。宿主 0.7.x 交互式预览会把
+			// viewBox 改写成缩放/平移后的裁剪区域，克隆过来必须重置回整图坐标系
+			svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+		} else {
 			const vb = svg.viewBox && svg.viewBox.baseVal;
 			if (vb && vb.width > 0) {
 				w = vb.width;
@@ -420,8 +446,16 @@ class ZoomLightbox extends Modal {
 		stage.addEventListener("pointerdown", (e) => {
 			if (e.pointerType === "mouse" && e.button !== 0) return;
 			stage.setPointerCapture(e.pointerId);
-			this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-			if (this.pointers.size === 2) this.lastPinch = null;
+			this.pointers.set(e.pointerId, {
+				x: e.clientX,
+				y: e.clientY,
+				sx: e.clientX,
+				sy: e.clientY,
+			});
+			if (this.pointers.size === 2) {
+				this.lastPinch = null;
+				this.tapSuppressed = true; // 双指手势不算点按
+			}
 			stage.classList.add("dzp-grabbing");
 		});
 
@@ -454,9 +488,14 @@ class ZoomLightbox extends Modal {
 		});
 
 		const release = (e) => {
+			const start = this.pointers.get(e.pointerId);
 			this.pointers.delete(e.pointerId);
 			if (this.pointers.size < 2) this.lastPinch = null;
-			if (this.pointers.size === 0) stage.classList.remove("dzp-grabbing");
+			if (this.pointers.size === 0) {
+				stage.classList.remove("dzp-grabbing");
+				if (!this.tapSuppressed) this.handleTap(e, start);
+				this.tapSuppressed = false;
+			}
 		};
 		stage.addEventListener("pointerup", release);
 		stage.addEventListener("pointercancel", release);
@@ -471,6 +510,23 @@ class ZoomLightbox extends Modal {
 			if (this.isFitted) this.fit();
 		};
 		window.addEventListener("resize", this.resizeHandler);
+	}
+
+	// 移动端 WKWebView 不会为双击派发 dblclick，用 pointerup 时间差自行判定
+	handleTap(e, start) {
+		if (!start || e.pointerType === "mouse") return;
+		if (Math.hypot(e.clientX - start.sx, e.clientY - start.sy) > 24) return;
+		const now = Date.now();
+		const last = this.lastTap;
+		if (
+			now - last.t < 300 &&
+			Math.hypot(e.clientX - last.x, e.clientY - last.y) < 24
+		) {
+			this.lastTap = { t: 0, x: 0, y: 0 };
+			this.fit();
+		} else {
+			this.lastTap = { t: now, x: e.clientX, y: e.clientY };
+		}
 	}
 
 	/* ---- 多页翻页 ---- */
@@ -505,26 +561,31 @@ class ZoomLightbox extends Modal {
 	async gotoPage(idx) {
 		if (this.rendering || !this.xml) return;
 		if (idx < 0 || idx >= this.pages.length || idx === this.page) return;
-		this.page = idx;
-		this.updatePageUi();
 
 		const cached = this.cache ? this.cache.get(idx) : null;
 		if (cached) {
+			this.page = idx;
+			this.updatePageUi();
 			this.mountSvg(cached, true);
 			return;
 		}
 
+		// 先乐观更新页码（标签跟随 + 禁用翻页按钮），渲染失败再回滚，
+		// 避免"标签显示新页、画布还是旧页"且无法立即重试
+		const prevPage = this.page;
+		this.page = idx;
 		this.rendering = true;
 		this.setLoading(true);
 		this.updatePageUi();
 		try {
-			const svg = await renderPageSvg(this.xml, idx);
+			const svg = await renderPageSvg(this.xml, idx, isDarkRender(this.app));
 			if (!this.modalEl.isConnected) return;
 			if (svg) {
 				const html = svg.outerHTML;
 				if (this.cache) this.cache.set(idx, html);
 				if (idx === this.page) this.mountSvg(html, true);
 			} else {
+				this.page = prevPage;
 				new Notice("Drawio 放大预览：该页渲染失败");
 			}
 		} finally {
@@ -551,7 +612,11 @@ module.exports = class DrawioZoomPreview extends Plugin {
 			this.app.workspace.on("layout-change", () => this.scheduleScan()),
 		);
 		this.registerEvent(
-			this.app.workspace.on("css-change", () => this.scheduleScan()),
+			this.app.workspace.on("css-change", () => {
+				// 主题/外观变化会改变离屏渲染的配色，已缓存的页全部作废
+				pageCache.clear();
+				this.scheduleScan();
+			}),
 		);
 
 		this.scheduleScan();
@@ -560,6 +625,8 @@ module.exports = class DrawioZoomPreview extends Plugin {
 	onunload() {
 		if (this.scanTimer) window.clearTimeout(this.scanTimer);
 		document.body.classList.remove("dzp-touch");
+		// 移除已挂到各预览上的按钮组，避免禁用后留下不可用的死按钮
+		document.querySelectorAll(".dzp-actions").forEach((el) => el.remove());
 	}
 
 	scheduleScan() {
@@ -687,20 +754,20 @@ module.exports = class DrawioZoomPreview extends Plugin {
 				xml = await this.app.vault.read(file);
 				title = file.basename;
 				cacheKey = file.path;
-				cacheStamp = String(file.stat.mtime);
+				cacheStamp = `${file.stat.mtime}:${isDarkRender(this.app) ? "dark" : "light"}`;
 				openPath = file.path;
 			}
 		} else if (host.classList.contains("drawio-codeblock")) {
 			setPhase("read-codeblock");
 			xml = await this.readCodeBlockXml(host);
-			const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+			const view = this.markdownViewForHost(host);
 			title =
 				view && view.file
 					? `${view.file.basename} · drawio 代码块`
 					: "drawio 代码块";
 			if (xml) {
 				cacheKey = `codeblock:${hashCode(normalizeXml(xml))}`;
-				cacheStamp = "1";
+				cacheStamp = isDarkRender(this.app) ? "dark" : "light";
 			}
 		} else if (host.classList.contains("drawio-preview-file-view")) {
 			setPhase("resolve-fileview");
@@ -710,7 +777,7 @@ module.exports = class DrawioZoomPreview extends Plugin {
 				xml = await this.app.vault.read(file);
 				title = file.basename;
 				cacheKey = file.path;
-				cacheStamp = String(file.stat.mtime);
+				cacheStamp = `${file.stat.mtime}:${isDarkRender(this.app) ? "dark" : "light"}`;
 				openPath = file.path;
 			}
 		}
@@ -732,6 +799,7 @@ module.exports = class DrawioZoomPreview extends Plugin {
 		if (cache) cache.set(initialPage, svgHtml);
 
 		setPhase("open-modal");
+		if (lightboxOpen) return;
 		new ZoomLightbox(this.app, {
 			title,
 			xml,
@@ -765,10 +833,28 @@ module.exports = class DrawioZoomPreview extends Plugin {
 		);
 	}
 
+	// 找到 host 实际所在的 MarkdownView。不能用"当前激活视图"：
+	// 悬停预览、Hover Editor、非焦点分屏里激活的可能是别的笔记
+	markdownViewForHost(host) {
+		let found = null;
+		this.app.workspace.iterateAllLeaves((leaf) => {
+			if (found) return;
+			const view = leaf.view;
+			if (
+				view instanceof MarkdownView &&
+				view.containerEl &&
+				view.containerEl.contains(host)
+			) {
+				found = view;
+			}
+		});
+		return found || this.app.workspace.getActiveViewOfType(MarkdownView);
+	}
+
 	// ```drawio 代码块：通过 MarkdownView.getSectionInfo 回读源码
 	async readCodeBlockXml(host) {
 		try {
-			const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+			const view = this.markdownViewForHost(host);
 			if (!view || !view.file) return null;
 			const sec =
 				typeof view.getSectionInfo === "function"

@@ -39,6 +39,10 @@ body.dzp-touch .dzp-actions {
 	color: var(--text-normal);
 	background: var(--background-modifier-hover);
 }
+/* 宿主 0.7.x 交互式预览激活时，其自带工具栏位于右上角；本插件按钮组下移避让 */
+.drawio-interactive-active .dzp-actions {
+	top: 44px;
+}
 
 /* --- 灯箱弹窗 --- */
 .modal.dzp-modal {
