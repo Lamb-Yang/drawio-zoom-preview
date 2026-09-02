@@ -1,0 +1,82 @@
+name: Release
+
+# 推送版本 tag（如 1.0.1）时自动打包并创建 GitHub Release
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+env:
+  PLUGIN_NAME: drawio-zoom-preview
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Obsidian 的更新器依赖"tag 名 == manifest.json 的 version"，
+      # 不一致会导致用户端更新失败，这里提前拦截
+      - name: 校验 tag 与 manifest.json 版本一致
+        run: |
+          MANIFEST_VERSION="$(jq -r .version manifest.json)"
+          if [ "$MANIFEST_VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 manifest.json 的版本 $MANIFEST_VERSION 不一致，请将两者改为相同后再打 tag"
+            exit 1
+          fi
+          {
+            echo "VERSION=$MANIFEST_VERSION"
+            echo "MIN_APP_VERSION=$(jq -r .minAppVersion manifest.json)"
+          } >> "$GITHUB_ENV"
+
+      - name: 更新 versions.json（社区插件市场 / BRAT 依赖）
+        run: |
+          if [ -f versions.json ]; then
+            jq --arg v "$VERSION" --arg m "$MIN_APP_VERSION" \
+              '. + {($v): $m}' versions.json > versions.json.tmp
+          else
+            jq -n --arg v "$VERSION" --arg m "$MIN_APP_VERSION" \
+              '{($v): $m}' > versions.json.tmp
+          fi
+          mv versions.json.tmp versions.json
+          cat versions.json
+
+      - name: 打包插件 zip
+        run: zip "$PLUGIN_NAME-$VERSION.zip" main.js manifest.json styles.css
+
+      # versions.json 需要随仓库演进，由 bot 自动回写 main
+      - name: 回写 versions.json 到 main
+        run: |
+          if [ -z "$(git status --porcelain versions.json)" ]; then
+            echo "versions.json 无变化，跳过"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add versions.json
+            git commit -m "chore(release): versions.json for $VERSION [skip ci]"
+            git push origin "HEAD:main"
+          fi
+
+      - name: 创建 / 更新 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ASSETS=(
+            "$PLUGIN_NAME-$VERSION.zip"
+            main.js
+            manifest.json
+            styles.css
+            versions.json
+          )
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --clobber --repo "$GITHUB_REPOSITORY" "${ASSETS[@]}"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$PLUGIN_NAME $VERSION" \
+              --generate-notes \
+              "${ASSETS[@]}"
+          fi
